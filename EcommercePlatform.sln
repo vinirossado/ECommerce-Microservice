@@ -5,6 +5,7 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{BC737666-FB80-4875-8F2F-ABF6373219E8}"
 
+EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "User", "User", "{37A2C98E-9558-41AA-B47C-B506546772A4}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UserService", "src\Services\UserService\UserService.csproj", "{404710F4-3A4B-40CC-9C64-D6B58BECC6D7}"
