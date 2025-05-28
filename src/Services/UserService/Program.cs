@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -288,6 +289,7 @@ namespace User
         [Required(ErrorMessage = "Password is required")]
         public string Password { get; set; } = string.Empty;
 
+        [JsonIgnore]
         public string? IpAddress { get; set; } = string.Empty;
     }
 
@@ -297,6 +299,7 @@ namespace User
         public string Email { get; } = string.Empty;
         public string Password { get; } = string.Empty;
         
+        [JsonIgnore]
         public string? IpAddress { get; set; } = string.Empty;
 
     }
