@@ -1,0 +1,137 @@
+
+services:
+  # SQL Server Database
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ecommerce-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kafka and Zookeeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: ecommerce-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - ecommerce-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: ecommerce-kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - ecommerce-network
+
+  # Kong API Gateway - Database
+  kong-database:
+    image: postgres:15
+    container_name: kong-database
+    environment:
+      POSTGRES_USER: kong
+      POSTGRES_DB: kong
+      POSTGRES_PASSWORD: kongpass
+    volumes:
+      - kong_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - ecommerce-network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kong API Gateway - Migrations
+  kong-migration:
+    image: kong:latest
+    container_name: kong-migration
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpass
+      KONG_PG_DATABASE: kong
+    command: /bin/sh -c "kong migrations bootstrap && kong migrations up && kong migrations finish"
+    restart: on-failure
+    networks:
+      - ecommerce-network
+
+  # Kong API Gateway
+  kong:
+    image: kong:latest
+    container_name: kong
+    depends_on:
+      - kong-migration
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpass
+      KONG_PG_DATABASE: kong
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl
+      # Kong Manager configuration
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002
+      KONG_ADMIN_GUI_AUTH: basic-auth
+      KONG_ENFORCE_RBAC: "off"
+      KONG_ADMIN_GUI_SESSION_CONF: '{"secret":"your-secret-here", "storage":"kong", "cookie_secure":false}'
+      KONG_ADMIN_CORS_ORIGINS: "*"
+      KONG_ADMIN_GUI_CORS_ORIGINS: "*"
+    volumes:
+      - ./kong.conf:/etc/kong/kong.conf:ro
+    ports:
+      - "8000:8000" # Kong Proxy - Main entry point for API requests
+      - "8443:8443" # Kong Proxy SSL
+      - "8001:8001" # Kong Admin API - For configuring Kong
+      - "8444:8444" # Kong Admin API SSL
+      - "8002:8002" # Kong Manager - Admin UI
+    networks:
+      - ecommerce-network
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+
+volumes:
+  sqlserver_data:
+  redis_data:
+  kong_data:
+
+networks:
+  ecommerce-network:
+    driver: bridge

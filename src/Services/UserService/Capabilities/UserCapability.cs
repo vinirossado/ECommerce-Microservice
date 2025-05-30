@@ -75,7 +75,11 @@ public class UserCapability(
 
     public async Task<AuthResponse?> RegisterAsync(RegisterRequest request, CancellationToken cancellationToken = default)
     {
-        if (await context.Users.AnyAsync(u => u.Username == request.Username || u.Email == request.Email, cancellationToken))
+        var userExists = await context.Users.AnyAsync(u =>
+                u.Username == request.Username || u.Email == request.Email,
+            cancellationToken);
+
+        if (userExists)
         {
             logger.LogWarning("Registration failed: Username {Username} or Email {Email} already exists", request.Username, request.Email);
             return null;
@@ -213,14 +217,14 @@ public class UserCapability(
             return null;
         }
 
-        if (user.Username != userDto.Username && 
+        if (user.Username != userDto.Username &&
             await context.Users.AnyAsync(u => u.Username == userDto.Username && u.Id != userId, cancellationToken))
         {
             logger.LogWarning("Update failed: Username {Username} already exists", userDto.Username);
             return null;
         }
 
-        if (user.Email != userDto.Email && 
+        if (user.Email != userDto.Email &&
             await context.Users.AnyAsync(u => u.Email == userDto.Email && u.Id != userId, cancellationToken))
         {
             logger.LogWarning("Update failed: Email {Email} already exists", userDto.Email);
@@ -229,7 +233,7 @@ public class UserCapability(
 
         user.Username = userDto.Username;
         user.Email = userDto.Email;
-        
+
         if (user.Role != userDto.Role && userDto.Role == "Admin")
         {
             logger.LogWarning("Attempt to change role to Admin for user {UserId} - additional verification required", userId);
@@ -279,7 +283,7 @@ public class UserCapability(
             .Take(pageSize)
             .ToListAsync(cancellationToken);
 
-        logger.LogInformation("Retrieved {Count} users for page {Page} with page size {PageSize}", 
+        logger.LogInformation("Retrieved {Count} users for page {Page} with page size {PageSize}",
             users.Count, page, pageSize);
 
         return users.Select(MapToDto);

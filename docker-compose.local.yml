@@ -1,0 +1,148 @@
+
+services:
+  # SQL Server Database
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: ecommerce-sqlserver-local
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=StrongPassword123!
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data_local:/var/opt/mssql
+    networks:
+      - ecommerce-network-local
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U SA -P 'StrongPassword123!' -Q 'SELECT 1'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ecommerce-redis-local
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_local:/data
+    networks:
+      - ecommerce-network-local
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kafka and Zookeeper
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: ecommerce-zookeeper-local
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - ecommerce-network-local
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: ecommerce-kafka-local
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - ecommerce-network-local
+
+  # Kong API Gateway - Database
+  kong-database:
+    image: postgres:15
+    container_name: kong-database-local
+    environment:
+      POSTGRES_USER: kong
+      POSTGRES_DB: kong
+      POSTGRES_PASSWORD: kongpass
+    volumes:
+      - kong_data_local:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - ecommerce-network-local
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Kong API Gateway - Migrations
+  kong-migration:
+    image: kong:latest
+    container_name: kong-migration-local
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpass
+      KONG_PG_DATABASE: kong
+    command: /bin/sh -c "kong migrations bootstrap && kong migrations up && kong migrations finish"
+    restart: on-failure
+    networks:
+      - ecommerce-network-local
+
+  # Kong API Gateway - Local Development
+  kong-local:
+    image: kong:latest
+    container_name: kong-local
+    depends_on:
+      - kong-migration
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpass
+      KONG_PG_DATABASE: kong
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002
+    volumes:
+      - ./kong-local.conf:/etc/kong/kong.conf:ro
+    ports:
+      - "8000:8000" # Kong Proxy for local development
+      - "8001:8001" # Kong Admin API - For configuring Kong
+      - "8002:8002" # Kong Manager UI
+    networks:
+      - ecommerce-network-local
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+
+volumes:
+  sqlserver_data_local:
+  redis_data_local:
+  kong_data_local:
+
+networks:
+  ecommerce-network-local:
+    driver: bridge

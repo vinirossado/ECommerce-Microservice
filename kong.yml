@@ -1,0 +1,27 @@
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: user-service
+    url: http://user-service:8080
+    routes:
+      - name: user-api-route
+        paths:
+          - /api/auth
+        strip_path: false
+    
+    plugins:
+      - name: cors
+        config:
+          origins:
+            - "*"
+          methods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+          headers:
+            - Content-Type
+            - Authorization
+          credentials: true
+          max_age: 3600

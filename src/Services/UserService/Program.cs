@@ -32,7 +32,14 @@ builder.Services.AddEndpointsApiExplorer();
 
 // Database Configuration
 builder.Services.AddDbContext<UserDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        sqlServerOptions => sqlServerOptions
+            .EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(30),
+                errorNumbersToAdd: null)
+            .CommandTimeout(30)));
 
 // JWT Authentication Configuration
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
@@ -66,14 +73,14 @@ builder.Services.AddAuthentication(options =>
             OnAuthenticationFailed = context =>
             {
                 Log.Warning("JWT Authentication failed: {Error}", context.Exception.Message);
-                
+
                 return Task.CompletedTask;
             },
             OnTokenValidated = context =>
             {
                 Log.Information("JWT Token validated for user: {UserId}",
                     context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value);
-                
+
                 return Task.CompletedTask;
             }
         };
@@ -103,7 +110,7 @@ builder.Services.AddRateLimiter(options =>
                 PermitLimit = 100,
                 Window = TimeSpan.FromMinutes(1)
             }));
-            
+
     options.AddPolicy("AuthPolicy", context =>
     {
         return RateLimitPartition.GetFixedWindowLimiter(
@@ -190,6 +197,50 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Ensure the database is created and migrations are applied
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var dbContext = services.GetRequiredService<UserDbContext>();
+
+        // Wait for SQL Server to be ready with retries
+        var maxRetries = 10;
+        var retryDelay = TimeSpan.FromSeconds(5);
+        var retryCount = 0;
+        var databaseCreated = false;
+
+        while (!databaseCreated && retryCount < maxRetries)
+        {
+            try
+            {
+                // This will create the database if it doesn't exist
+                dbContext.Database.EnsureCreated();
+                databaseCreated = true;
+                Log.Information("Database created successfully or already exists.");
+            }
+            catch (Exception ex)
+            {
+                retryCount++;
+                Log.Warning($"Database creation attempt {retryCount} failed: {ex.Message}. Retrying in {retryDelay.TotalSeconds} seconds...");
+                Thread.Sleep(retryDelay);
+            }
+        }
+
+        if (!databaseCreated)
+        {
+            Log.Error("Failed to create database after {RetryCount} attempts", maxRetries);
+            throw new Exception($"Failed to create database after {maxRetries} attempts");
+        }
+    }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "An error occurred while creating the database");
+        throw;
+    }
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -203,12 +254,12 @@ app.Use(async (context, next) =>
 
     // Content Security Policy - Prevents XSS attacks
     headers.ContentSecurityPolicy = "default-src 'self'; " +
-        "script-src 'self' 'unsafe-inline'; " +
-        "style-src 'self' 'unsafe-inline'; " +
-        "img-src 'self' data: https:; " +
-        "font-src 'self'; " +
-        "connect-src 'self'; " +
-        "frame-ancestors 'none'";
+                                    "script-src 'self' 'unsafe-inline'; " +
+                                    "style-src 'self' 'unsafe-inline'; " +
+                                    "img-src 'self' data: https:; " +
+                                    "font-src 'self'; " +
+                                    "connect-src 'self'; " +
+                                    "frame-ancestors 'none'";
 
     // Prevent MIME type sniffing
     headers["X-Content-Type-Options"] = "nosniff";
@@ -285,23 +336,20 @@ namespace User
     {
         [Required(ErrorMessage = "Username is required")]
         public string Username { get; set; } = string.Empty;
-        
+
         [Required(ErrorMessage = "Password is required")]
         public string Password { get; set; } = string.Empty;
 
-        [JsonIgnore]
-        public string? IpAddress { get; set; } = string.Empty;
+        [JsonIgnore] public string? IpAddress { get; set; } = string.Empty;
     }
 
     public class RegisterRequest
     {
-        public string Username { get; } = string.Empty;
-        public string Email { get; } = string.Empty;
-        public string Password { get; } = string.Empty;
-        
-        [JsonIgnore]
-        public string? IpAddress { get; set; } = string.Empty;
+        public required string Username { get; set; }
+        public required string Email { get;  set; }
+        public required string Password { get;  set; }
 
+        [JsonIgnore] public string? IpAddress { get; set; } = string.Empty;
     }
 
     public class AuthResponse
@@ -351,7 +399,7 @@ namespace User
             {
                 return Task.CompletedTask;
             }
-            
+
             var resourceUserId = httpContext.Request.RouteValues["userId"]?.ToString();
             if (userId == resourceUserId)
             {
@@ -362,4 +410,3 @@ namespace User
         }
     }
 }
-
